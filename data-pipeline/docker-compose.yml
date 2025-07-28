@@ -1,0 +1,237 @@
+version: '3.8'
+
+services:
+  # TimescaleDB - PostgreSQL时间序列数据库
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    container_name: timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hummingbot
+      POSTGRES_USER: hummingbot
+      POSTGRES_PASSWORD: hummingbot_password_2024
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      TIMESCALEDB_TELEMETRY: 'off'
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./database/timescaledb/init:/docker-entrypoint-initdb.d:ro
+      - ./database/timescaledb/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    ports:
+      - "5432:5432"
+    # networks:
+    #   - hummingbot-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hummingbot -d hummingbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: |
+      postgres 
+      -c shared_preload_libraries=timescaledb
+      -c max_connections=200
+      -c shared_buffers=512MB
+      -c effective_cache_size=2GB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=8MB
+
+  # Redis - 缓存和会话管理
+  redis:
+    image: redis:7-alpine
+    container_name: hummingbot-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    # networks:
+    #   - hummingbot-net
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Hummingbot主应用
+  hummingbot:
+    image: hummingbot/hummingbot:latest
+    container_name: hummingbot-main
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./conf:/home/hummingbot/conf
+      - ./config/hummingbot:/home/hummingbot/config
+      - ./logs:/home/hummingbot/logs
+      - ./data:/home/hummingbot/data
+      - ./scripts:/home/hummingbot/scripts
+    environment:
+      - CONFIG_PASSWORD=hummingbot2024
+      - DB_ENGINE=postgresql
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - DB_USERNAME=hummingbot
+      - DB_PASSWORD=hummingbot_password_2024
+      - DB_NAME=hummingbot
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OKX_ENABLED=true
+      - ENABLE_TIMESCALEDB=true
+      - HYPERTABLE_CHUNK_TIME_INTERVAL=1d
+    # networks:
+    #   - hummingbot-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    tty: true
+    stdin_open: true
+
+  # # 分析服务
+  # analytics:
+  #   build:
+  #     context: ./analytics
+  #     dockerfile: Dockerfile
+  #   container_name: hummingbot-analytics
+  #   restart: unless-stopped
+  #   depends_on:
+  #     timescaledb:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./analytics/queries:/app/queries:ro
+  #     - ./analytics/reports:/app/reports
+  #     - ./logs/analytics:/app/logs
+  #   environment:
+  #     - TIMESCALEDB_HOST=timescaledb
+  #     - TIMESCALEDB_PORT=5432
+  #     - TIMESCALEDB_USER=hummingbot
+  #     - TIMESCALEDB_PASSWORD=hummingbot_password_2024
+  #     - TIMESCALEDB_DATABASE=hummingbot
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #     - ANALYTICS_INTERVAL=60
+  #     - REPORT_INTERVAL=300
+  #   ports:
+  #     - "8002:8000"
+  #   networks:
+  #     - hummingbot-net
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+  # Grafana监控面板
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: hummingbot-grafana
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #     - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+  #     - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+  #     - ./monitoring/grafana/plugins:/var/lib/grafana/plugins
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin2024
+  #     - GF_INSTALL_PLUGINS=grafana-polystat-panel,grafana-worldmap-panel,grafana-clock-panel
+  #     - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+  #     - GF_USERS_ALLOW_SIGN_UP=false
+  #     - GF_USERS_ALLOW_ORG_CREATE=false
+  #   networks:
+  #     - hummingbot-net
+  #   depends_on:
+  #     - timescaledb
+
+  # 数据备份服务
+  # backup:
+  #   image: postgres:15-alpine
+  #   container_name: hummingbot-backup
+  #   restart: "no"
+  #   depends_on:
+  #     - timescaledb
+  #   volumes:
+  #     - ./backups:/backups
+  #     - ./scripts/backup.sh:/backup.sh:ro
+  #   environment:
+  #     - PGHOST=timescaledb
+  #     - PGUSER=hummingbot
+  #     - PGPASSWORD=hummingbot_password_2024
+  #     - PGDATABASE=hummingbot
+  #   networks:
+  #     - hummingbot-net
+  #   command: |
+  #     sh -c "
+  #       apk add --no-cache curl &&
+  #       while true; do
+  #         echo '📦 创建备份: '$(date)
+          
+  #         # 完整备份
+  #         pg_dump --verbose --clean --no-acl --no-owner | gzip > /backups/hummingbot_full_$(date +%Y%m%d_%H%M%S).sql.gz
+          
+  #         # 仅数据备份
+  #         pg_dump --verbose --data-only --exclude-table-data='pg_stat_*' | gzip > /backups/hummingbot_data_$(date +%Y%m%d_%H%M%S).sql.gz
+          
+  #         # 清理7天前的备份
+  #         find /backups -name '*.sql.gz' -type f -mtime +7 -delete
+          
+  #         echo '✅ 备份完成'
+  #         sleep 86400
+  #       done
+  #     "
+  #   profiles:
+  #     - backup
+
+  # 性能监控
+  # performance-monitor:
+  #   image: python:3.11-slim
+  #   container_name: hummingbot-monitor
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - timescaledb
+  #     - analytics
+  #   volumes:
+  #     - ./monitoring/scripts:/monitor/scripts:ro
+  #     - ./logs/monitor:/monitor/logs
+  #   environment:
+  #     - TIMESCALEDB_HOST=timescaledb
+  #     - TIMESCALEDB_PORT=5432
+  #     - TIMESCALEDB_USER=hummingbot
+  #     - TIMESCALEDB_PASSWORD=hummingbot_password_2024
+  #     - TIMESCALEDB_DATABASE=hummingbot
+  #     - ANALYTICS_API_URL=http://analytics:8000
+  #     - MONITORING_INTERVAL=60
+  #     - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+  #   networks:
+  #     - hummingbot-net
+  #   command: |
+  #     sh -c "
+  #       pip install asyncpg psutil requests pyyaml prometheus_client schedule &&
+  #       python /monitor/scripts/performance_monitor.py
+  #     "
+  #   profiles:
+  #     - monitoring
+
+volumes:
+  timescaledb_data:
+    driver: local
+  redis_data:
+    driver: local
+  # grafana_data:
+  #   driver: local
+
+# networks:
+#   hummingbot-net:
+#     driver: bridge
+#     ipam:
+#       config:
+#         - subnet: 172.22.0.0/16 

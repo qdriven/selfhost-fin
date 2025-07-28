@@ -1,0 +1,158 @@
+services:
+  # TimescaleDB - 时间序列数据库
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    container_name: vnpy-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vnpy_crypto
+      POSTGRES_USER: vnpy
+      POSTGRES_PASSWORD: vnpy_password_2024
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      TIMESCALEDB_TELEMETRY: 'off'
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./database/timescaledb/init:/docker-entrypoint-initdb.d:ro
+      - ./config/database/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vnpy -d vnpy_crypto"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: |
+      postgres 
+      -c shared_preload_libraries=timescaledb
+      -c max_connections=200
+      -c shared_buffers=1GB
+      -c effective_cache_size=4GB
+      -c maintenance_work_mem=256MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=16MB
+
+  # Redis - 缓存和消息队列
+  redis:
+    image: redis:7-alpine
+    container_name: vnpy-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # VNPY 主应用
+  vnpy-trader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vnpy-trader
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./config:/app/config:ro
+      - ./strategies:/app/strategies
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=vnpy
+      - POSTGRES_PASSWORD=vnpy_password_2024
+      - POSTGRES_DATABASE=vnpy_crypto
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - OKX_API_KEY=${OKX_API_KEY:-}
+      - OKX_SECRET_KEY=${OKX_SECRET_KEY:-}
+      - OKX_PASSPHRASE=${OKX_PASSPHRASE:-}
+      - OKX_SUBDOMAIN=${OKX_SUBDOMAIN:-www}
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+    ports:
+      - "8888:8888"  # Jupyter
+      - "8080:8080"  # Web UI
+    stdin_open: true
+    tty: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Grafana 监控面板
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vnpy-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin2024
+      - GF_INSTALL_PLUGINS=grafana-polystat-panel,grafana-worldmap-panel,grafana-clock-panel
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_ALLOW_ORG_CREATE=false
+    depends_on:
+      - timescaledb
+
+  # 数据采集服务
+  data-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.collector
+    container_name: vnpy-data-collector
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./data:/app/data
+    environment:
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=vnpy
+      - POSTGRES_PASSWORD=vnpy_password_2024
+      - POSTGRES_DATABASE=vnpy_crypto
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OKX_API_KEY=${OKX_API_KEY:-}
+      - OKX_SECRET_KEY=${OKX_SECRET_KEY:-}
+      - OKX_PASSPHRASE=${OKX_PASSPHRASE:-}
+      - OKX_SUBDOMAIN=${OKX_SUBDOMAIN:-www}
+      - PYTHONPATH=/app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  timescaledb_data:
+    driver: local
+  redis_data:
+    driver: local
+  grafana_data:
+    driver: local 
