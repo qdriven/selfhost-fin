@@ -7,3 +7,5 @@
 .env.development
 .env.test
 .env.production
+crydata/data/
+*.pyc

@@ -7,3 +7,9 @@
 .env.development
 .env.test
 .env.production
+.idea/
+.venv/
+.vscode/
+.DS_Store
+data
+*.pyc

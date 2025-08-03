@@ -13,8 +13,16 @@ from datetime import datetime
 # VNPY 核心模块
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
-from vnpy.trader.ui import create_qapp, MainWindow
 from vnpy.trader.setting import SETTINGS
+
+# VNPY GUI 模块 (可选导入)
+try:
+    from vnpy.trader.ui import create_qapp, MainWindow
+    HAS_GUI = True
+except ImportError:
+    HAS_GUI = False
+    create_qapp = None
+    MainWindow = None
 
 # VNPY 网关 (可选导入)
 try:
@@ -211,7 +219,7 @@ class VnpyApplication:
     
     def create_ui(self, use_gui: bool = True):
         """创建用户界面"""
-        if use_gui:
+        if use_gui and HAS_GUI:
             self.logger.info("创建图形用户界面...")
             
             # 创建 Qt 应用
@@ -223,6 +231,9 @@ class VnpyApplication:
             
             self.logger.info("图形界面创建完成")
             return qapp
+        elif use_gui and not HAS_GUI:
+            self.logger.warning("GUI 不可用，切换到控制台模式")
+            return self.create_ui(use_gui=False)
         else:
             self.logger.info("使用控制台模式")
             return None
