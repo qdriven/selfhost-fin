@@ -1,9 +1,76 @@
 """Data models for cryptocurrency data."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Literal
+from enum import Enum
 
 from pydantic import BaseModel, Field
+
+
+class TradingType(str, Enum):
+    """Trading type enumeration."""
+    SPOT = "spot"
+    UM_FUTURES = "um"  # USD-M futures
+    CM_FUTURES = "cm"  # COIN-M futures
+
+
+class DataType(str, Enum):
+    """Data type enumeration."""
+    KLINES = "klines"
+    TRADES = "trades"
+    AGG_TRADES = "aggTrades"
+    MARK_PRICE_KLINES = "markPriceKlines"
+    INDEX_PRICE_KLINES = "indexPriceKlines"
+    PREMIUM_INDEX_KLINES = "premiumIndexKlines"
+
+
+class TimePeriod(str, Enum):
+    """Time period enumeration."""
+    DAILY = "daily"
+    MONTHLY = "monthly"
+
+
+class DownloadConfig(BaseModel):
+    """Download configuration model."""
+    
+    proxy_url: Optional[str] = Field(None, description="HTTP/HTTPS proxy URL")
+    proxy_username: Optional[str] = Field(None, description="Proxy username")
+    proxy_password: Optional[str] = Field(None, description="Proxy password")
+    resume_downloads: bool = Field(True, description="Resume incomplete downloads")
+    concurrent_downloads: int = Field(3, description="Number of concurrent downloads")
+    chunk_size: int = Field(8192, description="Download chunk size in bytes")
+    retry_attempts: int = Field(3, description="Number of retry attempts")
+    retry_delay: float = Field(1.0, description="Delay between retries in seconds")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class DownloadProgress(BaseModel):
+    """Download progress tracking model."""
+    
+    file_path: str = Field(..., description="File path being downloaded")
+    url: str = Field(..., description="Download URL")
+    total_size: int = Field(0, description="Total file size in bytes")
+    downloaded_size: int = Field(0, description="Downloaded size in bytes")
+    status: Literal["pending", "downloading", "completed", "failed", "paused"] = Field("pending", description="Download status")
+    started_at: Optional[datetime] = Field(None, description="Download start time")
+    completed_at: Optional[datetime] = Field(None, description="Download completion time")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
+    
+    @property
+    def progress_percentage(self) -> float:
+        """Calculate progress percentage."""
+        if self.total_size == 0:
+            return 0.0
+        return (self.downloaded_size / self.total_size) * 100.0
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 
 class KlineData(BaseModel):
@@ -73,4 +140,4 @@ class TickerData(BaseModel):
     class Config:
         json_encoders = {
             datetime: lambda v: v.isoformat()
-        } 
+        }

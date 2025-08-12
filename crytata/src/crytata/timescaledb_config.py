@@ -1,6 +1,7 @@
 """TimescaleDB configuration and initialization."""
 
 import os
+from datetime import datetime
 from typing import Optional
 from sqlalchemy import create_engine, text, MetaData, Table, Column, String, Float, Integer, DateTime, Boolean, Index
 from sqlalchemy.ext.declarative import declarative_base
